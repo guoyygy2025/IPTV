@@ -1,23 +1,22 @@
-name: Update IPTV Source
+name: IPTV-Update-Task
 on:
   schedule:
-    - cron: '0 22 * * *' # 每天北京时间早上6点运行
-  workflow_dispatch:     # 允许手动点击运行
-
-permissions:
-  contents: write        # 允许脚本修改和推送文件
+    - cron: '0 22 * * *' # 北京时间早上6点运行
+  workflow_dispatch:     # 支持手动运行
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
+          python-version: '3.10'
 
       - name: Install Dependencies
         run: pip install requests
@@ -25,10 +24,10 @@ jobs:
       - name: Run Scraper
         run: python main.py
 
-      - name: Commit and Push
+      - name: Commit Files
         run: |
-          git config --local user.email "actions@github.com"
-          git config --local user.name "GitHub Action"
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
           git add hunan_iptv.m3u
-          git commit -m "Update IPTV source $(date +'%Y-%m-%d')" || exit 0
+          git commit -m "Auto Update $(date +'%Y-%m-%d %H:%M')" || exit 0
           git push
