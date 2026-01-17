@@ -1,73 +1,81 @@
 import requests
 import re
+import time
 from datetime import datetime
 
-# 搜索关键词：湖南电信 组播
-# cqshushu 的搜索 URL 结构通常是这样
-SEARCH_URL = "https://iptv.cqshushu.com/search?q=湖南电信+组播"
+# 配置
+BASE_URL = "https://iptv.cqshushu.com"
+# 搜索关键词：湖南省长沙市
+SEARCH_URL = f"{BASE_URL}/search?q=湖南省长沙市"
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Referer': BASE_URL
+}
 
-def get_iptv_sources():
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Referer': 'https://iptv.cqshushu.com/',
-        'Accept-Language': 'zh-CN,zh;q=0.9'
-    }
-    
+def download_m3u_and_extract(m3u_url):
+    """访问接口地址，下载并提取内部所有的 rtp/udp 链接"""
     try:
-        print(f"正在访问: {SEARCH_URL}")
-        response = requests.get(SEARCH_URL, headers=headers, timeout=30)
-        response.encoding = 'utf-8'
-        html = response.text
-        
-        # --- 调试信息：如果还是搜不到，取消下面一行的注释，在Actions日志里看输出了什么 ---
-        # print(html)
-
-        sources = []
-        
-        # cqshushu 的结构通常在 <tbody> 的 <tr> 中
-        # 我们用更通用的正则来捕获每一行数据
-        # 匹配逻辑：名称 -> 包含 rtp/udp 的链接 -> 存活时间数字
-        # 注意：这里需要根据网页实际 HTML 源码微调
-        # 下面是一个兼容性较强的匹配模式
-        items = re.findall(r'<tr>(.*?)</tr>', html, re.S)
-        print(f"抓取到 {len(items)} 行原始数据")
-
-        for item in items:
-            # 提取包含 rtp 或 udp 的链接
-            url_match = re.search(r'((rtp|udp)://[\d\.:]+)', item)
-            # 提取名称（通常在链接前后的第一个 td）
-            name_match = re.search(r'<td>(.*?)</td>', item)
-            # 提取存活天数（通常包含“天”字）
-            alive_match = re.search(r'(\d+)\s*天', item)
-
-            if url_match:
-                url = url_match.group(1)
-                name = name_match.group(1) if name_match else "湖南电信频道"
-                alive_days = int(alive_match.group(1)) if alive_match else 0
-                
-                # 核心过滤条件：湖南、电信、且存活 >= 2天
-                if alive_days >= 2:
-                    sources.append(f"#EXTINF:-1 group-title=\"湖南电信\", {name} (存活{alive_days}天)\n{url}")
-
-        # 去重处理
-        return list(set(sources))
-
+        print(f"   正在处理接口内容: {m3u_url}")
+        resp = requests.get(m3u_url, headers=HEADERS, timeout=15)
+        if resp.status_code == 200:
+            # 匹配文件内部真实的组播地址
+            links = re.findall(r'((?:rtp|udp)://[\d\.:]+)', resp.text)
+            return links
     except Exception as e:
-        print(f"抓取过程中出现错误: {e}")
-        return []
+        print(f"      下载失败: {e}")
+    return []
 
 def main():
-    sources = get_iptv_sources()
+    final_rtp_pool = set()  # 使用集合自动去重地址
     
-    with open("hunan.m3u", "w", encoding="utf-8") as f:
-        f.write("#EXTM3U\n")
-        f.write(f"# 更新时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-        if sources:
-            f.write("\n".join(sources))
+    try:
+        print(f"[{datetime.now()}] 步骤1: 搜索 '湖南省长沙市'...")
+        response = requests.get(SEARCH_URL, headers=HEADERS, timeout=20)
+        response.encoding = 'utf-8'
+        html = response.text
+
+        # 步骤2: 在表格中定位至少存活2天的源
+        # 匹配模式说明：捕获 m3u 链接和其对应的存活天数
+        # 该网站结构中，m3u链接通常在 <td> 里的 <a> 标签，天数在同行的后续 <td>
+        pattern = re.compile(r'href="(/m3u/.*?\.m3u)".*?(\d+)\s*天', re.S)
+        matches = pattern.findall(html)
+        
+        print(f"共发现 {len(matches)} 个潜在记录。")
+
+        for m3u_path, alive_days in matches:
+            days = int(alive_days)
+            if days >= 2:
+                m3u_full_url = BASE_URL + m3u_path
+                print(f"发现存活 {days} 天的源，开始提取具体频道...")
+                
+                # 步骤3: 下载并解析具体的组播地址
+                rtp_links = download_m3u_and_extract(m3u_full_url)
+                print(f"      提取到 {len(rtp_links)} 个唯一频道地址")
+                
+                for link in rtp_links:
+                    final_rtp_pool.add(link)
+                
+                # 频率控制，防止被封
+                time.sleep(1)
+
+        # 步骤4: 汇总生成去重后的 M3U 文件
+        if final_rtp_pool:
+            filename = "changsha_live.m3u"
+            with open(filename, "w", encoding="utf-8") as f:
+                f.write("#EXTM3U\n")
+                f.write(f"# 来源: cqshushu | 关键词: 湖南省长沙市 | 存活: >=2天\n")
+                f.write(f"# 总计去重后频道数: {len(final_rtp_pool)}\n")
+                f.write(f"# 更新日期: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                
+                for i, rtp in enumerate(sorted(list(final_rtp_pool))):
+                    f.write(f"#EXTINF:-1 group-title=\"长沙组播汇总\", 频道-{i+1:03d}\n")
+                    f.write(f"{rtp}\n")
+            print(f"成功！去重后的 M3U 已生成: {filename}，共 {len(final_rtp_pool)} 条地址。")
         else:
-            f.write("# 暂未找到符合条件的源（存活>=2天且为湖南电信组播）\n")
-            
-    print(f"处理完成，符合条件并保存的源数量: {len(sources)}")
+            print("未找到符合条件（存活>=2天）的源。")
+
+    except Exception as e:
+        print(f"主程序异常: {e}")
 
 if __name__ == "__main__":
     main()
