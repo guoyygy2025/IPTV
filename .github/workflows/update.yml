@@ -1,8 +1,8 @@
 name: IPTV-Update-Task
 on:
   schedule:
-    - cron: '0 22 * * *' # 北京时间早上6点运行
-  workflow_dispatch:     # 支持手动运行
+    - cron: '0 22 * * *'
+  workflow_dispatch:
 
 jobs:
   build:
@@ -22,12 +22,20 @@ jobs:
         run: pip install requests
 
       - name: Run Scraper
-        run: python main.py
+        # 使用 set -e 之外的逻辑，确保即使脚本失败也继续执行
+        run: python main.py || echo "Script failed but continuing..."
+
+      - name: Check file existence
+        # 核心步骤：如果文件不存在，则创建一个包含错误信息的占位文件，防止 git add 报错
+        run: |
+          if [ ! -f "hunan_iptv.m3u" ]; then
+            echo "# Error: File not generated due to firewall or script error" > hunan_iptv.m3u
+          fi
 
       - name: Commit Files
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           git add hunan_iptv.m3u
-          git commit -m "Auto Update $(date +'%Y-%m-%d %H:%M')" || exit 0
-          git push
+          # 只有在文件有变化时才 commit
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto Update $(date +'%Y-%m-%d %H:%M')" && git push)
